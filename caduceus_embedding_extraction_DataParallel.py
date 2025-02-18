@@ -55,8 +55,8 @@ def create_dataloader(sqs, batch_size, distributed_state, tokenizer, max_length=
 def main():
     # Set Arguments 
     parser = ArgumentParser(add_help=False, formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--control_data_dir", default=" ", type=str, help="Data directory of Control Subjects")
-    parser.add_argument("--case_data_dir", default=" ", type=str, help="Data directory of Case Subjects")
+    parser.add_argument("--control_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/ctrl_11000_ALLgenes", type=str, help="Data directory of Control Subjects")
+    parser.add_argument("--case_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/case_11000_ALLgenes", type=str, help="Data directory of Case Subjects")
     parser.add_argument("--save_dir", default=" ", type=str, help="Save directory")
     parser.add_argument("--batch_size", default=240, type=int, help="Batch size")
     args = parser.parse_args()
