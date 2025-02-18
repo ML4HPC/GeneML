@@ -55,8 +55,9 @@ def create_dataloader(sqs, batch_size, distributed_state, tokenizer, max_length=
 def main():
     # Set Arguments 
     parser = ArgumentParser(add_help=False, formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--data_dir", default=" ", type=str, help="Data directory")
-    parser.add_argument("--save_dir", default=" ", type=str, help="Save directory")
+    parser.add_argument("--control_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/ctrl_11000_ALLgenes", type=str, help="Data directory of Control Subjects")
+    parser.add_argument("--case_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/case_11000_ALLgenes", type=str, help="Data directory of Case Subjects")
+    parser.add_argument("--save_dir", default="/pscratch/sd/h/heehaw/GeneML/embeddings", type=str, help="Save directory")
     parser.add_argument("--batch_size", default=240, type=int, help="Batch size")
     args = parser.parse_args()
 
@@ -65,17 +66,16 @@ def main():
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     # Set Dataset and Gene List
-    ds_case = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/case_11000_ALLgenes")
-    ds_ctrl = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/ctrl_11000_ALLgenes")
+    ds_case = datasets.load_from_disk(args.case_data_dir)
+    ds_ctrl = datasets.load_from_disk(args.control_data_dir)
 
     gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
     gene_count = len(gene_list)
 
 
     # Set Save Directory
-    save_dir = "/pscratch/sd/h/heehaw/GeneML/embeddings"
     for gene in gene_list:
-        save_dir_gene = f"{save_dir}/{gene}"
+        save_dir_gene = f"{args.save_dir}/{gene}"
         if not os.path.exists(save_dir_gene):
             os.mkdir(save_dir_gene)
 
@@ -115,12 +115,10 @@ def main():
             
             max_length = max(len(seq) for seq in sqs)
             labels = [1 if '_case' in iid else 0 for iid in iids] # 1 for case, 0 for control
-            np.save(f"{save_dir}/"+gene+'/labels_'+str(sublist_count)+'.npy', labels) # save labels
+            np.save(os.path.join(*[args.save_dir, gene, f'labels_{sublist_count}.npy']), labels) # save labels
         
             # split the entire sequence into batches to avoid CUDA OOM error
-            batch_size = 240
-            #batched_sqs = DataLoader(sqs, batch_size=batch_size, shuffle=False)
-            batched_sqs = create_dataloader(sqs=sqs, batch_size=batch_size, distributed_state=distributed_state, tokenizer=tokenizer,max_length=max_length)
+            batched_sqs = create_dataloader(sqs=sqs, batch_size=args.batch_size, distributed_state=distributed_state, tokenizer=tokenizer,max_length=max_length)
         
             last_hidden_states = []
             batch_count = 1
@@ -154,7 +152,7 @@ def main():
                 embeddings = np.mean(last_hidden_state_cpu, axis=1) # mean pooling
 
             # save embeddings
-            np.save(f"{save_dir}/"+gene+'/embeddings_'+str(sublist_count)+'.npy', embeddings)
+            np.save(os.path.join(*[args.save_dir, gene, f'embeddings_{sublist_count}.npy']), embeddings)
         
             del last_hidden_states, last_hidden_state_cpu, embeddings
             #print('sublist '+str(sublist_count)+' - done!')
