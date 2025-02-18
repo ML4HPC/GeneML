@@ -6,6 +6,8 @@ from itertools import islice
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -17,14 +19,18 @@ model = AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
 model.eval()
 model = model.to(device)
 
-ds_case = datasets.load_from_disk("../../dataset/case_11000_ALLgenes")
-ds_ctrl = datasets.load_from_disk("../../dataset/ctrl_11000_ALLgenes")
+ds_case = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/case_11000_ALLgenes")
+ds_ctrl = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/ctrl_11000_ALLgenes")
 
 gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
 gene_count = len(gene_list)
 
+
+save_dir = "/pscratch/sd/h/heehaw/GeneML/embeddings"
 for gene in gene_list:
-    os.mkdir(gene)
+    save_dir_gene = f"{save_dir}/{gene}"
+    if not os.path.isdir(save_dir_gene):
+        os.mkdir(save_dir_gene)
 
 for n in range(0, gene_count):
 
@@ -35,8 +41,8 @@ for n in range(0, gene_count):
     sublists = [sublist.tolist() for sublist in sublists]
 
     sublist_count = 1
-    for lst in sublists:
-        print('sublist '+str(sublist_count)+' - start!')
+    for lst in tqdm(sublists):
+        #print('sublist '+str(sublist_count)+' - start!')
         sqs = []
         iids = []
         for i in lst:
@@ -51,12 +57,13 @@ for n in range(0, gene_count):
             iids.append(iid_cat)
         
         max_length = max(len(seq) for seq in sqs)
+        #print(max_length)
         labels = [1 if '_case' in iid else 0 for iid in iids] # 1 for case, 0 for control
-        np.save(gene+'/labels_'+str(sublist_count)+'.npy', labels) # save labels
+        np.save(f"{save_dir}/"+gene+'/labels_'+str(sublist_count)+'.npy', labels) # save labels
     
         # split the entire sequence into batches to avoid CUDA OOM error
-        batch_size = 10
-        batched_sqs = DataLoader(sqs, batch_size=batch_size, shuffle=False)
+        batch_size = 360
+        batched_sqs = DataLoader(sqs, batch_size=batch_size, shuffle=False, num_workers=32, pin_memory=False)
     
         last_hidden_states = []
         batch_count = 1
@@ -83,7 +90,7 @@ for n in range(0, gene_count):
                 
                 del inputs, outputs, hidden_states, last_hidden_state, forward_hidden, rc_hidden, flipped_rc_hidden, averaged_hidden_state
                 torch.cuda.empty_cache()
-                print('batch '+str(batch_count)+' - done!')
+                #print('batch '+str(batch_count)+' - done!')
                 batch_count += 1
         
             last_hidden_states = torch.cat(last_hidden_states, dim=0)
@@ -91,10 +98,10 @@ for n in range(0, gene_count):
             embeddings = np.mean(last_hidden_state_cpu, axis=1) # mean pooling
 
         # save embeddings
-        np.save(gene+'/embeddings_'+str(sublist_count)+'.npy', embeddings)
+        np.save(f"{save_dir}/"+gene+'/embeddings_'+str(sublist_count)+'.npy', embeddings)
     
         del last_hidden_states, last_hidden_state_cpu, embeddings
-        print('sublist '+str(sublist_count)+' - done!')
+        #print('sublist '+str(sublist_count)+' - done!')
         sublist_count += 1
         torch.cuda.empty_cache()
         
