@@ -66,8 +66,8 @@ def main():
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     # Set Dataset and Gene List
-    ds_case = datasets.load_from_disk(f"{args.case_data_dir}/dataset/case_11000_ALLgenes")
-    ds_ctrl = datasets.load_from_disk(f"{args.control_data_dir}/dataset/ctrl_11000_ALLgenes")
+    ds_case = datasets.load_from_disk(args.case_data_dir)
+    ds_ctrl = datasets.load_from_disk(args.control_data_dir)
 
     gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
     gene_count = len(gene_list)
