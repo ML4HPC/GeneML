@@ -5,7 +5,8 @@
 - **caduceus_embedding_extraction.py** is a python script for extracting embeddings of DNA sequence of each gene using Caduceus
 - **caduceus_embedding_extraction.py** is a python script for extracting embeddings of DNA sequence of each gene using Caduceus with Distributed Data Parallel
   ```
-  # To run this script, using the following command line (This requires huggingfaces "accelerate" library)
+  # To run this script, using the following command line (This requires huggingfaces "accelerate" library)  
+
   torchrun --nproc_per_node {num_gpus} caduceus_embedding_extraction_accelerate.py
 
   ```
