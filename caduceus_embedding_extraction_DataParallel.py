@@ -67,7 +67,7 @@ gene_count = len(gene_list)
 save_dir = "/pscratch/sd/h/heehaw/GeneML/embeddings"
 for gene in gene_list:
     save_dir_gene = f"{save_dir}/{gene}"
-    if not os.path.isdir(save_dir_gene):
+    if not os.path.exists(save_dir_gene):
         os.mkdir(save_dir_gene)
 
 
