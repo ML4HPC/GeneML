@@ -1,3 +1,10 @@
+"""
+Modified the original script to use DistributedDataParallel for faster inference, based on the following example:
+https://github.com/huggingface/accelerate/blob/main/examples/inference/distributed/distributed_speech_generation.py
+
+"""
+
+
 import os
 import pandas as pd
 import datasets
