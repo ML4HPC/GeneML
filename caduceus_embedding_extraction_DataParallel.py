@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--control_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/ctrl_11000_ALLgenes", type=str, help="Data directory of Control Subjects")
     parser.add_argument("--case_data_dir", default="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/case_11000_ALLgenes", type=str, help="Data directory of Case Subjects")
     parser.add_argument("--save_dir", default="/pscratch/sd/h/heehaw/GeneML/embeddings", type=str, help="Save directory")
-    parser.add_argument("--batch_size", default=120, type=int, help="Batch size")
+    parser.add_argument("--batch_size", default=60, type=int, help="Batch size")
     args = parser.parse_args()
 
 
