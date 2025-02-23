@@ -72,6 +72,20 @@ def main():
     gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
     gene_count = len(gene_list)
 
+    # Save labels
+    iids = []
+    for i in list_gene:
+        sq, iid, gene = islice(ds_case[i].values(), 3)
+        iid_cat = iid + '_case'
+        iids.append(iid_cat)
+    for i in list_gene:
+        sq, iid, gene = islice(ds_ctrl[i].values(), 3)
+        iid_cat = iid + '_ctrl'
+        iids.append(iid_cat)
+    
+    labels = [1 if '_case' in iid else 0 for iid in iids]  # 1 for case, 0 for control
+    np.save('{args.save_dir}/labels.npy', labels)
+
 
     # Set Save Directory
     for gene in gene_list:
@@ -101,21 +115,14 @@ def main():
         for lst in tqdm(sublists):
             #print('sublist '+str(sublist_count)+' - start!')
             sqs = []
-            iids = []
             for i in lst:
                 sq, iid, gene = islice(ds_case[i].values(), 3)
-                iid_cat = iid + '_case'
                 sqs.append(sq)
-                iids.append(iid_cat)
             for i in lst:
                 sq, iid, gene = islice(ds_ctrl[i].values(), 3)
-                iid_cat = iid + '_ctrl'
                 sqs.append(sq)
-                iids.append(iid_cat)
             
             max_length = max(len(seq) for seq in sqs)
-            labels = [1 if '_case' in iid else 0 for iid in iids] # 1 for case, 0 for control
-            np.save(os.path.join(*[args.save_dir, gene, f'labels_{sublist_count}.npy']), labels) # save labels
         
             # split the entire sequence into batches to avoid CUDA OOM error
             batched_sqs = create_dataloader(sqs=sqs, batch_size=args.batch_size, distributed_state=distributed_state, tokenizer=tokenizer,max_length=max_length)
