@@ -10,4 +10,4 @@
 
   ```
 - **gene_embeddings_classification_train_only.py** is a python script for simple binary classification only with the training set of exon embeddings for each gene and prediction performance check using 5-fold CV
-
+- **classification_modeling_gene_demo.py** is a python script for simple binary classification with gene embeddings and demographic information separately and AUC calculation using stratified 10-fold CV
