@@ -116,9 +116,19 @@ def process_embeddings(embeddings_combined, method="pca", n_components=256):
 # Modeling (using four ML models) & Manual cross-validation
 models = {
     "rf": lambda: cuRFC(random_state=98, n_streams=1),
-    "mlp": lambda: MLPClassifier(random_state=98, max_iter=500),
+    "mlp": lambda: MLPClassifier(
+        random_state=98,
+        max_iter=500,
+        early_stopping=True,
+        validation_fraction=0.0,
+        n_iter_no_change=10
+    ),
     "xgb": lambda: xgb.XGBClassifier(
-        n_estimators=100, random_state=98, eval_metric="error", device="cuda"
+        n_estimators=100,
+        random_state=98,
+        early_stopping_rounds=10,
+        eval_metric="auc",
+        device="cuda"
     ),
     "lr": lambda: cuLR(tol=0.001),
 }
@@ -175,11 +185,30 @@ def train_evaluate_model(
                 X_demo_val = cp.asarray(X_demo_val)
                 X_demo_test = cp.asarray(X_demo_test)
 
-            # Train models
+            # Train models with validation where applicable
             model_gene = model_code()
             model_demo = model_code()
-            model_gene.fit(X_gene_train, y_train)
-            model_demo.fit(X_demo_train, y_train)
+            
+            if model_name == "mlp":
+                # MLP with early stopping using validation set
+                model_gene.fit(X_gene_train, y_train, 
+                             validation_data=(X_gene_val, y_val))
+                model_demo.fit(X_demo_train, y_train,
+                             validation_data=(X_demo_val, y_val))
+                
+            elif model_name == "xgb":
+                # XGBoost with early stopping using validation set
+                model_gene.fit(X_gene_train, y_train,
+                             eval_set=[(X_gene_val, y_val)],
+                             verbose=False)
+                model_demo.fit(X_demo_train, y_train,
+                             eval_set=[(X_demo_val, y_val)],
+                             verbose=False)
+                
+            else:
+                # RF and LR don't use validation during training
+                model_gene.fit(X_gene_train, y_train)
+                model_demo.fit(X_demo_train, y_train)
 
             # Get predictions for validation set to optimize weights
             gene_pred_val = model_gene.predict_proba(X_gene_val)[:, 1]
