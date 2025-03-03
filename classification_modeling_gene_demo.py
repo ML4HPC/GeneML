@@ -303,10 +303,10 @@ def train_evaluate_model(
             if model_name == 'mlp':
                 # MLP with early stopping using validation set
                 criterion = nn.BCEWithLogitsLoss()
-                optimizer_gene = optim.Adam(model_gene.parameters(), lr=0.001)
-                optimizer_demo = optim.Adam(model_demo.parameters(), lr=0.001)
+                optimizer_gene = optim.Adam(model_gene.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
+                optimizer_demo = optim.Adam(model_demo.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
 
-                n_epochs = 500
+                n_epochs = 200
                 patience = 10
 
                 print('Training gene model started!')
