@@ -1,16 +1,22 @@
 import numpy as np
 import os
 import re
+
 from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
+
 import cuml
 from cuml.ensemble import RandomForestClassifier as cuRFC
-from sklearn.neural_network import MLPClassifier
 from cuml import LogisticRegression as cuLR
 import xgboost as xgb
 import cupy as cp
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 
 
 def optimize_ensemble_weights(gene_pred, demo_pred, y_true):
@@ -29,7 +35,7 @@ def optimize_ensemble_weights(gene_pred, demo_pred, y_true):
     return best_weights
 
 
-def load_gene_embeddings(gene_list, base_dir="../"):
+def load_gene_embeddings(gene_list, base_dir="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/simple", emb_dir="embgen_mean"):
     """
     Load and concatenate embeddings for all genes.
 
@@ -53,7 +59,7 @@ def load_gene_embeddings(gene_list, base_dir="../"):
     embeddings_list = []
     for gene in gene_list:
         # Get sorted file paths
-        directory = os.path.join(base_dir, gene)
+        directory = os.path.join(base_dir, emb_dir, gene)
         file_paths = [
             os.path.join(directory, f)
             for f in os.listdir(directory)
@@ -113,16 +119,78 @@ def process_embeddings(embeddings_combined, method="pca", n_components=256):
     raise ValueError(f"Unknown method: {method}")
 
 
+# Defining an MLP classification model to leverage predefined validation sets for early stopping
+class MLPClassifier(nn.Module):
+
+    def __init__(self, input_dim, hidden_dim):
+        super(MLPClassifier, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
+    def forward(self, x):
+        return self.model(x)
+    
+# MLP - Training with early stopping
+def train_model(model, train_loader, val_loader, criterion, optimizer, n_epochs=200, patience=5, device='cuda'):
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    best_model_state = None
+
+    for epoch in range(n_epochs):
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            optimizer.zero_grad()
+            outputs = model(X_batch)
+            loss = criterion(outputs, y_batch)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * X_batch.size(0)
+        train_loss /= len(train_loader.dataset)
+
+        # Evaluation on validation set
+        model.eval()
+        val_loss = 0.0
+        with torch.inference_mode():
+            for X_batch, y_batch in val_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                outputs = model(X_batch)
+                loss = criterion(outputs, y_batch)
+                val_loss += loss.item() * X_batch.size(0)
+        val_loss /= len(val_loader.dataset)
+
+        print(f'Epoch {epoch+1}/{n_epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}')
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            best_model_state = model.state_dict()
+
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print('Early stopping triggered!')
+                if best_model_state is not None:
+                    model.load_state_dict(best_model_state)
+                break
+    
+    return model
+
+
+torch.manual_seed(98)
+device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
+
 # Modeling (using four ML models) & Manual cross-validation
 models = {
     "rf": lambda: cuRFC(random_state=98, n_streams=1),
-    "mlp": lambda: MLPClassifier(
-        random_state=98,
-        max_iter=500,
-        early_stopping=True,
-        validation_fraction=0.0,
-        n_iter_no_change=10
-    ),
+    "mlp": lambda input_dim: MLPClassifier(
+        input_dim=input_dim,
+        hidden_dim=100
+    ).to(device),
     "xgb": lambda: xgb.XGBClassifier(
         n_estimators=100,
         random_state=98,
@@ -132,6 +200,17 @@ models = {
     ),
     "lr": lambda: cuLR(tol=0.001),
 }
+
+
+def get_predictions(model, X_tensor, device='cuda'):
+    """
+    Returns the positive class probabilities for the given input tensor
+    """
+    model.eval()
+    with torch.inference_mode():
+        outputs = model(X_tensor.to(device))
+        probs = torch.sigmoid(outputs)
+        return probs.cpu().numpy().flatten()
 
 
 def train_evaluate_model(
@@ -176,25 +255,83 @@ def train_evaluate_model(
         y_test = labels[test_idx]
 
         try:
-            # Convert to GPU if needed
-            if model_name != "mlp":
+            # Convert to tensors or GPU if needed
+            if model_name == 'mlp':
+                X_gene_train = torch.tensor(X_gene_train, dtype=torch.float32)
+                X_gene_val = torch.tensor(X_gene_val, dtype=torch.float32)
+                X_gene_test = torch.tensor(X_gene_test, dtype=torch.float32)
+                X_demo_train = torch.tensor(X_demo_train, dtype=torch.float32)
+                X_demo_val = torch.tensor(X_demo_val, dtype=torch.float32)
+                X_demo_test = torch.tensor(X_demo_test, dtype=torch.float32)
+                y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+                y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+                y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
+
+                gene_train_set = TensorDataset(X_gene_train, y_train)
+                gene_val_set = TensorDataset(X_gene_val, y_val)
+                gene_test_set = TensorDataset(X_gene_test, y_test)
+                demo_train_set = TensorDataset(X_demo_train, y_train)
+                demo_val_set = TensorDataset(X_demo_val, y_val)
+                demo_test_set = TensorDataset(X_demo_test, y_test)
+
+                gene_train_loader = DataLoader(gene_train_set, batch_size=10, shuffle=True)
+                gene_val_loader = DataLoader(gene_val_set, batch_size=10, shuffle=False)
+                gene_test_loader = DataLoader(gene_test_set, batch_size=10, shuffle=False)
+                demo_train_loader = DataLoader(demo_train_set, batch_size=10, shuffle=True)
+                demo_val_loader = DataLoader(demo_val_set, batch_size=10, shuffle=False)
+                demo_test_loader = DataLoader(demo_test_set, batch_size=10, shuffle=False)
+
+            else:
                 X_gene_train = cp.asarray(X_gene_train)
                 X_gene_val = cp.asarray(X_gene_val)
                 X_gene_test = cp.asarray(X_gene_test)
                 X_demo_train = cp.asarray(X_demo_train)
                 X_demo_val = cp.asarray(X_demo_val)
                 X_demo_test = cp.asarray(X_demo_test)
-
+                
             # Train models with validation where applicable
-            model_gene = model_code()
-            model_demo = model_code()
-            
-            if model_name == "mlp":
+            if model_name == 'mlp':
+                input_dim_gene = X_gene_train.shape[1]
+                input_dim_demo = X_demo_train.shape[1]
+                model_gene = models[model_name](input_dim_gene)
+                model_demo = models[model_name](input_dim_demo)
+
+            else:
+                model_gene = model_code()
+                model_demo = model_code()
+
+            if model_name == 'mlp':
                 # MLP with early stopping using validation set
-                model_gene.fit(X_gene_train, y_train, 
-                             validation_data=(X_gene_val, y_val))
-                model_demo.fit(X_demo_train, y_train,
-                             validation_data=(X_demo_val, y_val))
+                criterion = nn.BCEWithLogitsLoss()
+                optimizer_gene = optim.Adam(model_gene.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
+                optimizer_demo = optim.Adam(model_demo.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
+
+                n_epochs = 200
+                patience = 10
+
+                print('Training gene model started!')
+                model_gene = train_model(
+                    model_gene,
+                    gene_train_loader,
+                    gene_val_loader,
+                    criterion,
+                    optimizer_gene,
+                    n_epochs=n_epochs,
+                    patience=patience,
+                    device=device
+                )
+
+                print('Training demo model started!')
+                model_demo = train_model(
+                    model_demo,
+                    demo_train_loader,
+                    demo_val_loader,
+                    criterion,
+                    optimizer_demo,
+                    n_epochs=n_epochs,
+                    patience=patience,
+                    device=device
+                )
                 
             elif model_name == "xgb":
                 # XGBoost with early stopping using validation set
@@ -211,8 +348,13 @@ def train_evaluate_model(
                 model_demo.fit(X_demo_train, y_train)
 
             # Get predictions for validation set to optimize weights
-            gene_pred_val = model_gene.predict_proba(X_gene_val)[:, 1]
-            demo_pred_val = model_demo.predict_proba(X_demo_val)[:, 1]
+            if model_name == 'mlp':
+                gene_pred_val = get_predictions(model_gene, X_gene_val, device)
+                demo_pred_val = get_predictions(model_demo, X_demo_val, device)
+
+            else:
+                gene_pred_val = model_gene.predict_proba(X_gene_val)[:, 1]
+                demo_pred_val = model_demo.predict_proba(X_demo_val)[:, 1]
 
             # Convert to numpy if needed
             gene_pred_val = (
@@ -231,8 +373,13 @@ def train_evaluate_model(
             weights_history.append(weights)
 
             # Get predictions for test set
-            gene_pred_test = model_gene.predict_proba(X_gene_test)[:, 1]
-            demo_pred_test = model_demo.predict_proba(X_demo_test)[:, 1]
+            if model_name == 'mlp':
+                gene_pred_test = get_predictions(model_gene, X_gene_test, device)
+                demo_pred_test = get_predictions(model_demo, X_demo_test, device)
+            
+            else:
+                gene_pred_test = model_gene.predict_proba(X_gene_test)[:, 1]
+                demo_pred_test = model_demo.predict_proba(X_demo_test)[:, 1]
 
             # Convert to numpy if needed
             gene_pred_test = (
