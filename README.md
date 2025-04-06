@@ -10,5 +10,6 @@
 
   ```
 - **classification/gene_embeddings_classification_train_only.py** is a python script for simple binary classification only with the training set of exon embeddings for each gene and prediction performance check using 5-fold CV
-- **classification/classification_modeling_gene_demo.py** is a python script for simple binary classification with gene embeddings and demographic information separately and AUC calculation using stratified 10-fold CV
+- **classification/classification_modeling_late_fusion.py** is a python script for simple binary classification with gene embeddings and demographic information separately and AUC calculation using stratified 10-fold CV
+- **classification/classification_modeling_early_fusion.py** is a python script for simple binary classification with gene embeddings and demographic information in a single input array and AUC calculation using stratified 10-fold CV
 - **classification/hyperparameter_tuning.py** is a python script for tuning hyperparameters for XGBoost classifier with gene embeddings & demographic information
