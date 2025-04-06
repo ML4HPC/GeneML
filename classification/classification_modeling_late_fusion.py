@@ -35,7 +35,7 @@ def optimize_ensemble_weights(gene_pred, demo_pred, y_true):
     return best_weights
 
 
-def load_gene_embeddings(gene_list, base_dir="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/simple", emb_dir="embgen_mean"):
+def load_gene_embeddings(gene_list, base_dir='/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/2nd_mdd'):
     """
     Load and concatenate embeddings for all genes.
 
@@ -59,7 +59,7 @@ def load_gene_embeddings(gene_list, base_dir="/global/cfs/projectdirs/m4244/hees
     embeddings_list = []
     for gene in gene_list:
         # Get sorted file paths
-        directory = os.path.join(base_dir, emb_dir, gene)
+        directory = os.path.join(base_dir, gene)
         file_paths = [
             os.path.join(directory, f)
             for f in os.listdir(directory)
@@ -118,7 +118,6 @@ def process_embeddings(embeddings_combined, method="pca", n_components=256):
 
     raise ValueError(f"Unknown method: {method}")
 
-
 # Defining an MLP classification model to leverage predefined validation sets for early stopping
 class MLPClassifier(nn.Module):
 
@@ -134,7 +133,7 @@ class MLPClassifier(nn.Module):
         return self.model(x)
     
 # MLP - Training with early stopping
-def train_model(model, train_loader, val_loader, criterion, optimizer, n_epochs=200, patience=5, device='cuda'):
+def train_model(model, train_loader, val_loader, criterion, optimizer, n_epochs=200, patience=10, device='cuda'):
     best_val_loss = float('inf')
     epochs_no_improve = 0
     best_model_state = None
@@ -180,7 +179,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, n_epochs=
     
     return model
 
-
 torch.manual_seed(98)
 device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
@@ -198,9 +196,8 @@ models = {
         eval_metric="auc",
         device="cuda"
     ),
-    "lr": lambda: cuLR(tol=0.001),
+    "lr": lambda: cuLR(tol=0.001, max_iter=5000),
 }
-
 
 def get_predictions(model, X_tensor, device='cuda'):
     """
@@ -211,7 +208,6 @@ def get_predictions(model, X_tensor, device='cuda'):
         outputs = model(X_tensor.to(device))
         probs = torch.sigmoid(outputs)
         return probs.cpu().numpy().flatten()
-
 
 def train_evaluate_model(
     gene_embeddings_transformed, demographics, labels, model_name, model_code
@@ -269,17 +265,13 @@ def train_evaluate_model(
 
                 gene_train_set = TensorDataset(X_gene_train, y_train)
                 gene_val_set = TensorDataset(X_gene_val, y_val)
-                gene_test_set = TensorDataset(X_gene_test, y_test)
                 demo_train_set = TensorDataset(X_demo_train, y_train)
                 demo_val_set = TensorDataset(X_demo_val, y_val)
-                demo_test_set = TensorDataset(X_demo_test, y_test)
 
                 gene_train_loader = DataLoader(gene_train_set, batch_size=10, shuffle=True)
                 gene_val_loader = DataLoader(gene_val_set, batch_size=10, shuffle=False)
-                gene_test_loader = DataLoader(gene_test_set, batch_size=10, shuffle=False)
                 demo_train_loader = DataLoader(demo_train_set, batch_size=10, shuffle=True)
                 demo_val_loader = DataLoader(demo_val_set, batch_size=10, shuffle=False)
-                demo_test_loader = DataLoader(demo_test_set, batch_size=10, shuffle=False)
 
             else:
                 X_gene_train = cp.asarray(X_gene_train)
@@ -288,7 +280,7 @@ def train_evaluate_model(
                 X_demo_train = cp.asarray(X_demo_train)
                 X_demo_val = cp.asarray(X_demo_val)
                 X_demo_test = cp.asarray(X_demo_test)
-                
+
             # Train models with validation where applicable
             if model_name == 'mlp':
                 input_dim_gene = X_gene_train.shape[1]
@@ -332,7 +324,7 @@ def train_evaluate_model(
                     patience=patience,
                     device=device
                 )
-                
+
             elif model_name == "xgb":
                 # XGBoost with early stopping using validation set
                 model_gene.fit(X_gene_train, y_train,
