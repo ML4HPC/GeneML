@@ -74,7 +74,7 @@ def load_gene_embeddings(gene_list, base_dir='/global/cfs/projectdirs/m4244/hees
 
 def process_embeddings_with_val(X_gene_train, X_demo_train, X_gene_test, X_demo_test, y_train, method="pca", n_components=256):
     """
-    Process gene embeddings for modeling with MLP or XGB
+    Process gene embeddings and aggregate it with demographic information for modeling with MLP or XGB
     """
     X_train_idx, X_val_idx, y_train_split, y_val_split = train_test_split(
         np.arange(len(y_train)), y_train, test_size=0.1, random_state=98
@@ -129,7 +129,7 @@ def process_embeddings_with_val(X_gene_train, X_demo_train, X_gene_test, X_demo_
 
 def process_embeddings_no_val(X_gene_train, X_demo_train, X_gene_test, X_demo_test, method="pca", n_components=256):
     """
-    Process gene embeddings for modeling with RF or LR
+    Process gene embeddings and aggregate it with demographic information for modeling with RF or LR
     """
     n_samples_train = X_gene_train.shape[0]
     n_samples_test = X_gene_test.shape[0]
