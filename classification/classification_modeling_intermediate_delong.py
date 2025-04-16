@@ -78,69 +78,34 @@ def load_gene_embeddings(gene_list, base_dir='/global/cfs/projectdirs/m4244/hees
     return embeddings_combined, demographics, labels
 
 
-def train_val_test_split(embeddings_combined, demographics, labels, train_val_idx, test_idx, method="pca"):
+def process_embeddings(embeddings_combined, demographics, labels, train_val_idx, test_idx, method="pca"):
     """
-    Split train and validation sets & Process gene embeddings and concatenate it with demographic information
+    Process gene embeddings and concatenate it with demographic information & Split to train and test sets
     """
-    train_val_split = StratifiedKFold(n_splits=5, shuffle=True, random_state=98)
-    train_idx, val_idx = next(
-        train_val_split.split(
-            embeddings_combined[train_val_idx], labels[train_val_idx]
-        )
-    )
-
-    train_idx = train_val_idx[train_idx]
-    val_idx = train_val_idx[val_idx]
-
-    X_gene_train = embeddings_combined[train_idx]
-    X_demo_train = demographics[train_idx]
-    y_train = labels[train_idx]
-    X_gene_val = embeddings_combined[val_idx]
-    X_demo_val = demographics[val_idx]
-    y_val = labels[val_idx]
-    X_gene_test = embeddings_combined[test_idx]
-    X_demo_test = demographics[test_idx]
-    y_test = labels[test_idx]
-
-    n_samples_train = X_gene_train.shape[0]
-    n_samples_val = X_gene_val.shape[0]
-    n_samples_test = X_gene_test.shape[0]
-
-    X_gene_train_reshaped = X_gene_train.reshape(n_samples_train, -1)
-    X_gene_val_reshaped = X_gene_val.reshape(n_samples_val, -1)
-    X_gene_test_reshaped = X_gene_test.reshape(n_samples_test, -1)
+    n_samples = embeddings_combined.shape[0]
+    embeddings_reshaped = embeddings_combined.reshape(n_samples, -1)
 
     if method == "concat":
-        X_gene_train_transformed = X_gene_train_reshaped.copy()
-        X_gene_val_transformed = X_gene_val_reshaped.copy()
-        X_gene_test_transformed = X_gene_test_reshaped.copy()
+        embeddings_transformed = embeddings_reshaped.copy()
 
     elif method == "pca":
         scaler = StandardScaler()
-        X_gene_train_scaled = scaler.fit_transform(X_gene_train_reshaped)
-        X_gene_val_scaled = scaler.transform(X_gene_val_reshaped)
-        X_gene_test_scaled = scaler.transform(X_gene_test_reshaped)
+        embeddings_scaled = scaler.fit_transform(embeddings_reshaped)
 
         pca = PCA(n_components=256, random_state=98)
-        X_gene_train_transformed = pca.fit_transform(X_gene_train_scaled).astype(np.float32)
-        X_gene_val_transformed = pca.transform(X_gene_val_scaled).astype(np.float32)
-        X_gene_test_transformed = pca.transform(X_gene_test_scaled).astype(np.float32)
+        embeddings_transformed = pca.fit_transform(embeddings_scaled).astype(np.float32)
 
     elif method == "max_pool":
-        X_gene_train_transformed = np.max(X_gene_train, axis=1)
-        X_gene_val_transformed = np.max(X_gene_val, axis=1)
-        X_gene_test_transformed = np.max(X_gene_test, axis=1)
+        embeddings_transformed = np.max(embeddings_combined, axis=1)
 
     else:  # mean_pool
-        X_gene_train_transformed = np.mean(X_gene_train, axis=1)
-        X_gene_val_transformed = np.mean(X_gene_val, axis=1)
-        X_gene_test_transformed = np.mean(X_gene_test, axis=1)
+        embeddings_transformed = np.mean(embeddings_combined, axis=1)
 
-    X_train = np.hstack([X_gene_train_transformed, X_demo_train])
-    X_val = np.hstack([X_gene_val_transformed, X_demo_val])
-    X_test = np.hstack([X_gene_test_transformed, X_demo_test])
+    X = np.hstack([embeddings_transformed, demographics])
+    X_train_val, X_test = X[train_val_idx], X[test_idx]
+    y_train_val, y_test = labels[train_val_idx], labels[test_idx]
 
-    return X_train, X_val, X_test, y_train, y_val, y_test
+    return X_train_val, X_test, y_train_val, y_test
 
 #######################
 ## Model Definition ##
@@ -294,119 +259,129 @@ def get_predictions(model, X_test, device='cuda'):
 def train_evaluate_model(
     embeddings_combined, demographics, labels, model_name, model_code, method
 ):
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=98)
+    outer_split = StratifiedKFold(n_splits=10, shuffle=True, random_state=98)
     auc_scores = []
     all_y_test = []
     all_preds = []
 
-    for fold, (train_val_idx, test_idx) in enumerate(
-        skf.split(embeddings_combined, labels)
+    for outer_fold, (train_val_idx, test_idx) in enumerate(
+        outer_split.split(embeddings_combined, labels)
     ):
-
-        X_train, X_val, X_test, y_train, y_val, y_test = train_val_test_split(
+        X_train_val, X_test, y_train_val, y_test = process_embeddings(
             embeddings_combined, demographics, labels, train_val_idx, test_idx, method=method
-        )
-
-        # Scale features
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
-        X_test_scaled = scaler.transform(X_test)
-
-        X_train = X_train_scaled.copy()
-        X_val = X_val_scaled.copy()
-        X_test = X_test_scaled.copy()
-
-        try:
-            # Convert to tensors or GPU if needed
-            if model_name in ['mlp','cnn']:
-                X_train = torch.tensor(X_train, dtype=torch.float32)
-                X_val = torch.tensor(X_val, dtype=torch.float32)
-                X_test = torch.tensor(X_test, dtype=torch.float32)
-                y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-                y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
-
-                train_set = TensorDataset(X_train, y_train)
-                val_set = TensorDataset(X_val, y_val)
-
-                train_loader = DataLoader(train_set, batch_size=10, shuffle=True)
-                val_loader = DataLoader(val_set, batch_size=10, shuffle=False)
-
-            elif model_name in ['rf', 'lr']:
-                X_train = cp.asarray(X_train)
-                X_test = cp.asarray(X_test)
-                y_train = cp.asarray(y_train)
-
-            elif model_name == 'xgb':
-                X_train = cp.asarray(X_train)
-                X_val = cp.asarray(X_val)
-                X_test = cp.asarray(X_test)
-                y_train = cp.asarray(y_train)
-                y_val = cp.asarray(y_val)
-
-            # Train models with validation where applicable
-            if model_name in ['mlp','cnn']:
-                input_dim = X_train.shape[1]
-                clf = models[model_name](input_dim)
-
-            else:
-                clf = model_code()
-
-            if model_name in ['mlp','cnn']:
-                criterion = nn.BCEWithLogitsLoss()
-                optimizer = optim.Adam(clf.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
-
-                n_epochs = 200
-                patience = 10
-
-                #print('Training started!')
-                clf = train_model(
-                    clf,
-                    train_loader,
-                    val_loader,
-                    criterion,
-                    optimizer,
-                    n_epochs=n_epochs,
-                    patience=patience,
-                    device=device
-                )
-
-            elif model_name == 'xgb':
-                # XGBoost with early stopping using validation set
-                clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-                
-            elif model_name == 'lgb':
-                clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], eval_metric='auc')
-
-            elif model_name == 'cb':
-                clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=10, metric_period=1, verbose=False)
-                
-            else:
-                # RF and LR don't use validation during training
-                clf.fit(X_train, y_train)
-
-            # Get predictions for test set
-            if model_name in ['mlp','cnn']:
-                pred_test = get_predictions(clf, X_test, device)
-            
-            else:
-                pred_test = clf.predict_proba(X_test)[:, 1]
-
-            # Convert to numpy if needed
-            pred_test = (
-                cp.asnumpy(pred_test)
-                if isinstance(pred_test, cp.ndarray)
-                else pred_test
             )
 
-            # Calculate final metrics
-            auc_scores.append(roc_auc_score(y_test, pred_test))
-            all_y_test.append(np.array(y_test).flatten())
-            all_preds.append(np.array(pred_test).flatten())
+        inner_preds = []
+        inner_split = StratifiedKFold(n_splits=5, shuffle=True, random_state=98)
+        for inner_fold, (train_idx, val_idx) in enumerate(
+            inner_split.split(X_train_val, y_train_val)
+        ):
+            X_train, X_val = X_train_val[train_idx], X_train_val[val_idx]
+            y_train, y_val = y_train_val[train_idx], y_train_val[val_idx]
 
-        except Exception as e:
-            print(f"Error in fold {fold}: {str(e)}")
-            continue
+            # Scale features
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_val_scaled = scaler.transform(X_val)
+            X_test_scaled = scaler.transform(X_test)
+
+            X_train = X_train_scaled.copy()
+            X_val = X_val_scaled.copy()
+            X_test = X_test_scaled.copy()
+
+            try:
+                # Convert to tensors or GPU if needed
+                if model_name in ['mlp','cnn']:
+                    X_train = torch.tensor(X_train, dtype=torch.float32)
+                    X_val = torch.tensor(X_val, dtype=torch.float32)
+                    X_test = torch.tensor(X_test, dtype=torch.float32)
+                    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+                    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+
+                    train_set = TensorDataset(X_train, y_train)
+                    val_set = TensorDataset(X_val, y_val)
+
+                    train_loader = DataLoader(train_set, batch_size=10, shuffle=True)
+                    val_loader = DataLoader(val_set, batch_size=10, shuffle=False)
+
+                elif model_name in ['rf', 'lr']:
+                    X_train = cp.asarray(X_train)
+                    X_test = cp.asarray(X_test)
+                    y_train = cp.asarray(y_train)
+
+                elif model_name == 'xgb':
+                    X_train = cp.asarray(X_train)
+                    X_val = cp.asarray(X_val)
+                    X_test = cp.asarray(X_test)
+                    y_train = cp.asarray(y_train)
+                    y_val = cp.asarray(y_val)
+
+                # Train models with validation where applicable
+                if model_name in ['mlp','cnn']:
+                    input_dim = X_train.shape[1]
+                    clf = models[model_name](input_dim)
+
+                else:
+                    clf = model_code()
+
+                if model_name in ['mlp','cnn']:
+                    criterion = nn.BCEWithLogitsLoss()
+                    optimizer = optim.Adam(clf.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0001)
+
+                    n_epochs = 200
+                    patience = 10
+
+                    #print('Training started!')
+                    clf = train_model(
+                        clf,
+                        train_loader,
+                        val_loader,
+                        criterion,
+                        optimizer,
+                        n_epochs=n_epochs,
+                        patience=patience,
+                        device=device
+                    )
+
+                elif model_name == 'xgb':
+                    # XGBoost with early stopping using validation set
+                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+                    
+                elif model_name == 'lgb':
+                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], eval_metric='auc')
+
+                elif model_name == 'cb':
+                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=10, metric_period=1, verbose=False)
+                    
+                else:
+                    # RF and LR don't use validation during training
+                    clf.fit(X_train, y_train)
+
+                # Get predictions for test set
+                if model_name in ['mlp','cnn']:
+                    pred_test = get_predictions(clf, X_test, device)
+                
+                else:
+                    pred_test = clf.predict_proba(X_test)[:, 1]
+
+                # Convert to numpy if needed
+                pred_test = (
+                    cp.asnumpy(pred_test)
+                    if isinstance(pred_test, cp.ndarray)
+                    else pred_test
+                )
+
+                # Calculate final metrics
+                auc_scores.append(roc_auc_score(y_test, pred_test))
+                inner_preds.append(np.array(pred_test).flatten())
+
+            except Exception as e:
+                print(f"Error in fold {outer_fold}-{inner_fold}: {str(e)}")
+                continue
+
+        avg_inner_preds = np.mean(inner_preds, axis=0)
+        all_y_test.append(np.array(y_test).flatten())
+        all_preds.append(avg_inner_preds)
     
     all_y_test = np.concatenate(all_y_test)
     all_preds = np.concatenate(all_preds)
@@ -496,8 +471,7 @@ if __name__ == "__main__":
     embeddings_combined, demographics, labels = load_gene_embeddings(gene_list)
 
     # Process embeddings with different methods
-    embedding_methods = [#"pca", "max_pool", 
-                         "mean_pool", "concat"]
+    embedding_methods = ["pca", "max_pool", "mean_pool", "concat"]
     final_results = {}
 
     # Modeling (using four ML models) & Manual cross-validation
