@@ -106,8 +106,7 @@ def tune_train_evaluate_model(embeddings_combined, demographics, labels):
                 'depth': trial.suggest_int('depth', 4, 10),
                 'l2_leaf_reg': trial.suggest_int('l2_leaf_reg', 1, 10),
                 'bagging_temperature': trial.suggest_float('bagging_temperature', 0, 1),
-                'random_strength': trial.suggest_float('random_strength', 0, 1),
-                'rsm': trial.suggest_float('rsm', 0.5, 1)
+                'random_strength': trial.suggest_float('random_strength', 0, 1)
             }
 
             # Inner split - train vs. val
