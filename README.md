@@ -13,4 +13,4 @@
 - **classification/classification_modeling_late_fusion.py** is a python script for simple binary classification with gene embeddings and demographic information separately and AUC calculation using stratified 10-fold CV
 - **classification/classification_modeling_intermediate_delong.py** is a python script for simple binary classification with gene embeddings and demographic information in a single input array and AUC calculation using stratified 10-fold CV + Delong's test with FDR correction for model selection
 - **classification/classification_modeling_single_gene.py** is a python script for simple binary classification (XGB) with single gene embeddings and demographic information in a single input array and AUC calculation using stratified 10-fold CV
-- **classification/hyperparameter_tuning.py** is a python script for tuning hyperparameters for XGBoost classifier with gene embeddings & demographic information
+- **classification/hyperparameter_tuning.py** is a python script for tuning hyperparameters for XGBoost classifier with gene embeddings & demographic information + saving the trained model
