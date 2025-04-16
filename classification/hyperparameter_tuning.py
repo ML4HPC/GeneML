@@ -2,18 +2,20 @@ import numpy as np
 import pandas as pd
 import os
 import re
+import joblib
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
 
-import xgboost as xgb
+import catboost as cb
 import cupy as cp
-
 import optuna
 
+#################################
+## Gene embeddings processing ##
 
-def load_gene_embeddings(gene_list, base_dir="embgen_mean"):  # embgen_mean, embgen_max
+def load_gene_embeddings(gene_list, base_dir="/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/2nd_mdd"):  # embgen_mean, embgen_max
     """
     Load and concatenate embeddings for all genes.
 
@@ -25,9 +27,9 @@ def load_gene_embeddings(gene_list, base_dir="embgen_mean"):  # embgen_mean, emb
         tuple: (embeddings_combined, demographics, labels)
     """
     # Load demographic data and labels
-    age = np.load("age.npy")
-    sex = np.load("sex.npy")
-    labels = np.load("labels.npy")
+    age = np.load(os.path.join(base_dir, 'age.npy'))
+    sex = np.load(os.path.join(base_dir, 'sex.npy'))
+    labels = np.load(os.path.join(base_dir, 'labels.npy'))
 
     def numerical_sort(file_name):
         match = re.search(r"embeddings_(\d+).npy", file_name)  # embeddings_, embeddings_max_
@@ -66,49 +68,46 @@ def load_gene_embeddings(gene_list, base_dir="embgen_mean"):  # embgen_mean, emb
     return embeddings_combined, demographics, labels
 
 
-def process_embeddings(embeddings_combined, demographics):
+def max_pool_embeddings(embeddings_combined, demographics, labels, train_val_idx, test_idx):
     """
-    Process the combined embeddings using concatenation.
-
-    Args:
-        embeddings_combined (np.ndarray): Combined gene embeddings of shape (n_samples, n_genes, n_features)
-        demographics (np.ndarray): Combined demographic embeddings of shape (n_samples, n_features)
-    
-    Returns:
-        np.ndarray: Processed embeddings
+    Process (max pooling) gene embeddings and concatenate it with demographic information & Split to train and test sets
     """
-    n_samples = embeddings_combined.shape[0]
-    all_gene_embeddings = embeddings_combined.reshape(n_samples, -1)
-    
-    return np.hstack([all_gene_embeddings, demographics])
+    embeddings_transformed = np.max(embeddings_combined, axis=1)
 
+    X = np.hstack([embeddings_transformed, demographics])
+    X_train_val, X_test = X[train_val_idx], X[test_idx]
+    y_train_val, y_test = labels[train_val_idx], labels[test_idx]
 
+    return X_train_val, X_test, y_train_val, y_test
 
-def tune_train_evaluate_model(embeddings_transformed, labels):
-    outer_split = StratifiedKFold(n_splits=10, shuffle=True, random_state=98)
+#################################################################
+## Cross-validated Model Evaluation with Hyperparameter Tuning ##
+
+def tune_train_evaluate_model(embeddings_combined, demographics, labels):
+
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=98)
     outer_auc_scores = []
 
     # Outer split - train/val vs. test
     for fold, (train_val_idx, test_idx) in enumerate(
-        outer_split.split(embeddings_transformed, labels)
+        skf.split(embeddings_combined, labels)
     ):
-        X_train_val, X_test = embeddings_transformed[train_val_idx], embeddings_transformed[test_idx]
-        y_train_val, y_test = labels[train_val_idx], labels[test_idx]
+        X_train_val, X_test, y_train_val, y_test = max_pool_embeddings(
+            embeddings_combined, demographics, labels, train_val_idx, test_idx
+            )
 
         def objective(trial):
             """
             Objective function for Optuna
             """
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000, step=100),
+                'iterations': trial.suggest_int('iterations', 100, 1000, step=100),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                'max_depth': trial.suggest_int('max_depth', 3, 10),
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
-                'gamma': trial.suggest_float('gamma', 0, 1),
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.1, 10, log=True),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 10, log=True)
+                'depth': trial.suggest_int('depth', 4, 10),
+                'l2_leaf_reg': trial.suggest_int('l2_leaf_reg', 1, 10),
+                'bagging_temperature': trial.suggest_float('bagging_temperature', 0, 1),
+                'random_strength': trial.suggest_float('random_strength', 0, 1),
+                'rsm': trial.suggest_float('rsm', 0.5, 1)
             }
 
             # Inner split - train vs. val
@@ -125,21 +124,11 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
                 X_train = scaler.fit_transform(X_train)
                 X_val = scaler.transform(X_val)
 
-                # Convert to cupy arrays
-                X_train = cp.asarray(X_train)
-                X_val = cp.asarray(X_val)
-
                 # Define and train the model with early stopping
-                model = xgb.XGBClassifier(
-                    **params,
-                    random_state=98,
-                    early_stopping_rounds=10,
-                    eval_metric="auc",
-                    device="cuda"
+                model = cb.CatBoostClassifier(
+                    **params, random_seed=98, task_type='GPU', eval_metric='AUC'
                 )
-                model.fit(X_train, y_train,
-                            eval_set=[(X_val, y_val)],
-                            verbose=False)
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=10, metric_period=1, verbose=False)
         
                 # Get predictions for validation set
                 val_preds = model.predict_proba(X_val)[:, 1]
@@ -155,7 +144,7 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
                 inner_auc_scores.append(roc_auc_score(y_val, val_preds))
 
                 # Best iteration
-                best_iter = model.best_iteration
+                best_iter = model.best_iteration_
                 best_iterations.append(best_iter)
 
             trial.set_user_attr('avg_best_iter', np.mean(best_iterations))
@@ -164,7 +153,7 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
 
         # Hyperparameter tuning using Optuna
         study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=50)
+        study.optimize(objective, n_trials=200)
 
         # Save trial information as a csv file
         trials_info = []
@@ -181,7 +170,7 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
             trials_info.append(trial_info)
 
         trials_df = pd.DataFrame(trials_info)
-        trials_df.to_csv(f'optuna_trial/mean/fold_{fold}_trial_info.csv', index=False)  # mean, max
+        trials_df.to_csv(f'optuna_trial/fold_{fold}_trial_info.csv', index=False)
 
         best_params = study.best_trial.params
         best_auc = study.best_trial.value
@@ -189,8 +178,8 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
         print(f'Best mean AUC in fold {fold}: {best_auc}')
 
         # Train the final model on the entire training set (train & validation sets) using the best parameters
-        best_best_iter = int(study.best_trial.user_attrs.get('avg_best_iter', best_params.get('n_estimators', None)))
-        best_params['n_estimators'] = best_best_iter
+        best_best_iter = int(study.best_trial.user_attrs.get('avg_best_iter', best_params.get('iterations', None)))
+        best_params['iterations'] = best_best_iter
         print(f'Best iterations in fold {fold}: {best_best_iter}')
 
         # Scale features only on train/val set
@@ -198,14 +187,8 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
         X_train_val = scaler.fit_transform(X_train_val)
         X_test = scaler.transform(X_test)
 
-        # Convert to cupy arrays
-        X_train_val = cp.asarray(X_train_val)
-        X_test = cp.asarray(X_test)
-
-        final_model = xgb.XGBClassifier(
-            **best_params,
-            random_state=98,
-            device="cuda"
+        final_model = cb.CatBoostClassifier(
+            **best_params, random_seed=98, task_type='GPU'
         )
         final_model.fit(X_train_val, y_train_val)
 
@@ -222,8 +205,7 @@ def tune_train_evaluate_model(embeddings_transformed, labels):
         # Compute AUC
         outer_auc_scores.append(roc_auc_score(y_test, test_preds))
 
-    return outer_auc_scores
-
+    return final_model, outer_auc_scores
 
 
 if __name__ == "__main__":
@@ -273,9 +255,10 @@ if __name__ == "__main__":
     # Load data
     embeddings_combined, demographics, labels = load_gene_embeddings(gene_list)
 
-    # Concatenate gene embeddings and demographic information
-    embeddings_transformed = process_embeddings(embeddings_combined, demographics)
-
     # Train and evaluate model
-    scores = tune_train_evaluate_model(embeddings_transformed, labels)
+    trained_model, scores = tune_train_evaluate_model(embeddings_combined, demographics, labels)
     print(f'AUC = {np.mean(scores):.3f} ± {np.std(scores):.3f}')
+
+    # Save the model
+    save_dir = "/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/2nd_mdd"
+    joblib.dump(trained_model, os.path.join(save_dir, 'trained_models/catboost.pkl'))
