@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import os
 import re
 from MLstatkit.stats import Delong_test
@@ -285,40 +286,36 @@ def train_evaluate_model(
             X_val_scaled = scaler.transform(X_val)
             X_test_scaled = scaler.transform(X_test)
 
-            X_train = X_train_scaled.copy()
-            X_val = X_val_scaled.copy()
-            X_test = X_test_scaled.copy()
-
             try:
                 # Convert to tensors or GPU if needed
                 if model_name in ['mlp','cnn']:
-                    X_train = torch.tensor(X_train, dtype=torch.float32)
-                    X_val = torch.tensor(X_val, dtype=torch.float32)
-                    X_test = torch.tensor(X_test, dtype=torch.float32)
-                    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-                    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+                    X_train_conv = torch.tensor(X_train_scaled, dtype=torch.float32)
+                    X_val_conv = torch.tensor(X_val_scaled, dtype=torch.float32)
+                    X_test_conv = torch.tensor(X_test_scaled, dtype=torch.float32)
+                    y_train_conv = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+                    y_val_conv = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-                    train_set = TensorDataset(X_train, y_train)
-                    val_set = TensorDataset(X_val, y_val)
+                    train_set = TensorDataset(X_train_conv, y_train)
+                    val_set = TensorDataset(X_val_conv, y_val)
 
                     train_loader = DataLoader(train_set, batch_size=10, shuffle=True)
                     val_loader = DataLoader(val_set, batch_size=10, shuffle=False)
 
                 elif model_name in ['rf', 'lr']:
-                    X_train = cp.asarray(X_train)
-                    X_test = cp.asarray(X_test)
-                    y_train = cp.asarray(y_train)
+                    X_train_conv = cp.asarray(X_train_scaled)
+                    X_test_conv = cp.asarray(X_test_scaled)
+                    y_train_conv = cp.asarray(y_train)
 
                 elif model_name == 'xgb':
-                    X_train = cp.asarray(X_train)
-                    X_val = cp.asarray(X_val)
-                    X_test = cp.asarray(X_test)
-                    y_train = cp.asarray(y_train)
-                    y_val = cp.asarray(y_val)
+                    X_train_conv = cp.asarray(X_train_scaled)
+                    X_val_conv = cp.asarray(X_val_scaled)
+                    X_test_conv = cp.asarray(X_test_scaled)
+                    y_train_conv = cp.asarray(y_train)
+                    y_val_conv = cp.asarray(y_val)
 
                 # Train models with validation where applicable
                 if model_name in ['mlp','cnn']:
-                    input_dim = X_train.shape[1]
+                    input_dim = X_train_conv.shape[1]
                     clf = models[model_name](input_dim)
 
                 else:
@@ -345,24 +342,24 @@ def train_evaluate_model(
 
                 elif model_name == 'xgb':
                     # XGBoost with early stopping using validation set
-                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+                    clf.fit(X_train_conv, y_train_conv, eval_set=[(X_val_conv, y_val_conv)], verbose=False)
                     
                 elif model_name == 'lgb':
-                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], eval_metric='auc')
+                    clf.fit(X_train_conv, y_train_conv, eval_set=[(X_val_conv, y_val_conv)], eval_metric='auc')
 
                 elif model_name == 'cb':
-                    clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=10, metric_period=1, verbose=False)
+                    clf.fit(X_train_conv, y_train_conv, eval_set=[(X_val_conv, y_val_conv)], early_stopping_rounds=10, metric_period=1, verbose=False)
                     
                 else:
                     # RF and LR don't use validation during training
-                    clf.fit(X_train, y_train)
+                    clf.fit(X_train_conv, y_train_conv)
 
                 # Get predictions for test set
                 if model_name in ['mlp','cnn']:
-                    pred_test = get_predictions(clf, X_test, device)
+                    pred_test = get_predictions(clf, X_test_conv, device)
                 
                 else:
-                    pred_test = clf.predict_proba(X_test)[:, 1]
+                    pred_test = clf.predict_proba(X_test_conv)[:, 1]
 
                 # Convert to numpy if needed
                 pred_test = (
@@ -485,6 +482,9 @@ if __name__ == "__main__":
         "cb": lambda: cb.CatBoostClassifier(iterations=100, random_seed=98, task_type='GPU', eval_metric='AUC'),
         "lr": lambda: cuLR(tol=0.001, max_iter=5000),
 }
+    
+    auc_records = []
+    delong_records = []
 
     for method in embedding_methods:
         print(f"\nProcessing embeddings with method: {method}")
@@ -506,6 +506,9 @@ if __name__ == "__main__":
 
             method_results[model_name] = results
             model_aucs = results["auc_scores"]
+            mean_auc = np.mean(model_aucs)
+            std_auc = np.std(model_aucs)
+            auc_records.append({'method': method, 'model': model_name, 'mean_auc': mean_auc, 'std_auc': std_auc})
             print(f"AUC = {np.mean(model_aucs):.3f} ± {np.std(model_aucs):.3f}")
 
         final_results[method] = method_results
@@ -521,10 +524,16 @@ if __name__ == "__main__":
             h0_rejected, p_corrected = fdrcorrection(raw_p, alpha=0.05)
             
             for idx, (model1, model2, z, p) in enumerate(comparison_results):
+                abs_z = abs(z)
+                neglog_p = -np.log10(p+1e-300)
+                neglog_padj = -np.log10(p_corrected[idx]+1e-300)
+                test_result = ("AUC values are significantly different." if h0_rejected[idx] == True else "AUC values are NOT significantly different.")
+                delong_records.append({'method': method, 'model1': model1, 'model2': model2,
+                                       'abs_z': abs_z, 'neg_log_p': neglog_p, 'neg_log_p_adj': neglog_padj, 'test_result': test_result})
                 print(f"\n{model1.upper()} vs. {model2.upper()}:")
-                print(f"Z-score (absolute) = {abs(z):.4f}")
-                print(f"Raw p-value (-log10-transformed) = {-np.log10(p+1e-300):.4f}")
-                print(f"FDR-adjusted p-value (-log10-transformed) = {-np.log10(p_corrected[idx]+1e-300):.4f}")
+                print(f"Z-score (absolute) = {abs_z:.4f}")
+                print(f"Raw p-value (-log10-transformed) = {neglog_p:.4f}")
+                print(f"FDR-adjusted p-value (-log10-transformed) = {neglog_padj:.4f}")
                 if h0_rejected[idx] == True:
                     print("AUC values are significantly different.")
                 else:
@@ -534,3 +543,9 @@ if __name__ == "__main__":
             print("\nNo pairwise comparisons available.")
 
         print()
+
+    # Create and save dataframes with the information
+    auc_df = pd.DataFrame(auc_records)
+    delong_df = pd.DataFrame(delong_records)
+    auc_df.to_csv('/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/2nd_mdd/modeling_results/auc_mean_std.csv', index=False)
+    delong_df.to_csv('/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/classification/2nd_mdd/modeling_results/delong_fdr.csv', index=False)
