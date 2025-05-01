@@ -285,7 +285,6 @@ def make_objective(X_train_val, y_train_val, model_name):
             if model_name in ['mlp','cnn']:
                 criterion = nn.BCEWithLogitsLoss()
                 optimizer = optim.Adam(clf.parameters(), lr=params['lr'], betas=(0.9, 0.999), eps=1e-8, weight_decay=params['weight_decay'])
-                #print('Training started!')
                 clf = train_model(
                     clf,
                     tr_loader,
@@ -300,17 +299,14 @@ def make_objective(X_train_val, y_train_val, model_name):
 
             elif model_name == 'xgb':
                 clf.fit(X_tr_conv, y_tr_conv, eval_set=[(X_ev_conv, y_ev_conv)], verbose=False)
-                # trial.set_user_attr('best_iterations', clf.best_iteration)
                 torch.cuda.empty_cache()
                 
             elif model_name == 'lgb':
                 clf.fit(X_tr, y_tr, eval_set=[(X_ev, y_ev)], eval_metric='auc')
-                # trial.set_user_attr('best_iterations', clf.best_iteration_)
                 torch.cuda.empty_cache()
 
             elif model_name == 'cb':
                 clf.fit(X_tr, y_tr, eval_set=[(X_ev, y_ev)], early_stopping_rounds=10, metric_period=1, verbose=False)
-                # trial.set_user_attr('best_iterations', clf.best_iteration_)
                 torch.cuda.empty_cache()
                 
             else:  # lr, rf
@@ -378,7 +374,6 @@ def tune_train_evaluate_model(embeddings_combined, demographics, labels, model_n
 
             info = {'trial_number': t.number, 'mean_auc': t.value}
             info.update(t.params)
-
             trials_info.append(info)
 
         trials_df = pd.DataFrame(trials_info)
@@ -443,7 +438,6 @@ def tune_train_evaluate_model(embeddings_combined, demographics, labels, model_n
         if model_name in ['mlp','cnn']:
             criterion = nn.BCEWithLogitsLoss()
             optimizer = optim.Adam(clf.parameters(), lr=best_params['lr'], betas=(0.9, 0.999), eps=1e-8, weight_decay=best_params['weight_decay'])
-            #print('Training started!')
             clf = train_model(
                 clf,
                 otr_loader,
