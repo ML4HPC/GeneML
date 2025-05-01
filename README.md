@@ -9,8 +9,9 @@
   torchrun --nproc_per_node {num_gpus} caduceus_embedding_extraction_accelerate.py --save_dir /path/to/save/embeddings
 
   ```
-- **classification/gene_embeddings_classification_train_only.py** is a python script for simple binary classification only with the training set of exon embeddings for each gene and prediction performance check using 5-fold CV
-- **classification/classification_modeling_late_fusion.py** is a python script for simple binary classification with gene embeddings and demographic information separately and AUC calculation using stratified 10-fold CV
-- **classification/classification_modeling_intermediate_delong.py** is a python script for simple binary classification with gene embeddings and demographic information in a single input array and AUC calculation using nested CV (stratified 10-fold & 5-fold) + Delong's test with FDR correction for model selection
-- **classification/classification_modeling_single_gene.py** is a python script for simple binary classification (XGB) with single gene embeddings and demographic information in a single input array and AUC calculation using stratified 10-fold CV
-- **classification/hyperparameter_tuning.py** is a python script for tuning hyperparameters for CatBoostClassifier with gene embeddings & demographic information + saving the trained model
+- **classification/run_main.py** is a python script that...<br>
+  1) loads gene embeddings, demographic information, and labels<br>
+  2) aggregates gene embeddings with four different methods (PCA, max pooling, mean pooling, concatenation)<br>
+  3) quick-tunes gradient boosting-based models (XGBoost, LightGBM, CatBoost) to select the best one among them<br>
+  4) evaluates model performance of five classification algorithms (Random Forest, Logistic Regression, MLP, 1DCNN, selected gradient boosting model)<br>
+  5) saves modeling results using five metrics (AUC, AUPRC, precision, recall, f1)
