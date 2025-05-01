@@ -11,6 +11,8 @@ def load_gene_embeddings(gene_list, base_dir="/pscratch/sd/h/hazely/NESAP/caduce
     # Load demographic data and labels
     age = np.load(os.path.join(base_dir, "age.npy"))
     sex = np.load(os.path.join(base_dir, "sex.npy"))
+    income = np.load(os.path.join(base_dir, "income.npy"))
+    ethnicity = np.load(os.path.join(base_dir, "ethnicity.npy"))
     labels = np.load(os.path.join(base_dir, "labels.npy"))
 
     def numerical_sort(file_name):
@@ -45,7 +47,9 @@ def load_gene_embeddings(gene_list, base_dir="/pscratch/sd/h/hazely/NESAP/caduce
     # Process demographics
     age_reshaped = age.reshape(-1, 1).astype(np.float32)
     sex_reshaped = sex.reshape(-1, 1).astype(np.float32)
-    demographics = np.hstack([age_reshaped, sex_reshaped])
+    income_reshaped = income.reshape(-1, 1).astype(np.float32)
+    ethnicity_reshaped = ethnicity.reshape(-1, 1).astype(np.float32)
+    demographics = np.hstack([age_reshaped, sex_reshaped, income_reshaped, ethnicity_reshaped])
 
     return embeddings_combined, demographics, labels
 
