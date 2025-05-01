@@ -17,8 +17,8 @@ model = AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
 model.eval()
 model = model.to(device)
 
-ds_case = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/mdd_case_10288_ALLgenes")
-ds_ctrl = datasets.load_from_disk("/global/cfs/projectdirs/m4244/heesun/NESAP/caduceus/dataset/mdd_ctrl_10288_ALLgenes")
+ds_case = datasets.load_from_disk("/pscratch/sd/h/hazely/NESAP/caduceus/dataset/mdd_case_10288_ALLgenes")
+ds_ctrl = datasets.load_from_disk("/pscratch/sd/h/hazely/NESAP/caduceus/dataset/mdd_ctrl_10288_ALLgenes")
 
 gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
 
