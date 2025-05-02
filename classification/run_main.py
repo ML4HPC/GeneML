@@ -5,8 +5,8 @@ import pandas as pd
 
 import torch
 
-from biokdd.load_and_processing import load_gene_embeddings
-from biokdd.hyperparameter_tuning import tune_train_evaluate_model, get_best_gb
+from biokdd2.load_and_processing import load_gene_embeddings
+from biokdd2.hyperparameter_tuning import tune_train_evaluate_model, get_best_gb
 
 seed = 98
 random.seed(seed)
