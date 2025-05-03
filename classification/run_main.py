@@ -61,20 +61,19 @@ if __name__ == "__main__":
     embeddings_combined, demographics, labels = load_gene_embeddings(gene_list)
 
     # Process embeddings with different methods
-    embedding_methods = ["pca","max_pool","mean_pool"]  # concat
+    embedding_methods = ["max_pool","mean_pool","pca"]  ## "concat"
     model_names = ['rf','xgb','lgb','cb','lr','mlp','cnn']
+
+    # Quick tuning (GB models) - highest mean AUC
+    print("\nSearching for the best GB model...")
+    best_gb = get_best_gb(embeddings_combined, demographics, labels, embedding_methods)
+    print(f"\nBest GB model: {best_gb.upper()}")
 
     # Modeling (using four ML models) & Manual cross-validation
     metric_records = []
-
     for method in embedding_methods:
         print(f"\nProcessing embeddings with method: {method}")
         method_results = {}
-
-        # Quick tuning (GB models) - highest mean AUC
-        print("\nSearching for the best GB model...")
-        best_gb = get_best_gb(embeddings_combined, demographics, labels, method)
-        print(f"Best GB model: {best_gb.upper()}")
         
         # Train and evaluate models
         for model_name in model_names:
