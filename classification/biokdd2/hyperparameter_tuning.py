@@ -88,32 +88,32 @@ def quick_tune_gb(X, y, n_trials=10, csv_path='quick_tuning_trials_info.csv'):
                 X_tr, X_v = X[tidx], X[vidx]
                 y_tr, y_v = y[tidx], y[vidx]
 
-                eidx, pidx = train_test_split(np.arange(len(y_v)), test_size=0.5, stratify=y_v, random_state=98)
-                X_e, X_p = X_v[eidx],X_v[pidx]
-                y_e, y_p = y_v[eidx],y_v[pidx]
+                eidx, pidx = train_test_split(np.arange(len(y_tr)), test_size=0.1, stratify=y_tr, random_state=98)
+                X_t, X_e = X_tr[eidx],X_tr[pidx]
+                y_t, y_e = y_tr[eidx],y_tr[pidx]
 
                 if name == 'xgb':
-                    X_tr_conv = cp.asarray(X_tr)
+                    X_t_conv = cp.asarray(X_t)
                     X_e_conv = cp.asarray(X_e)
-                    X_p_conv = cp.asarray(X_p)
-                    y_tr_conv = cp.asarray(y_tr)
+                    X_v_conv = cp.asarray(X_v)
+                    y_t_conv = cp.asarray(y_t)
                     y_e_conv = cp.asarray(y_e)
 
-                    model.fit(X_tr_conv, y_tr_conv, eval_set=[(X_e_conv, y_e_conv)], verbose=False)
+                    model.fit(X_t_conv, y_t_conv, eval_set=[(X_e_conv, y_e_conv)], verbose=False)
                     torch.cuda.empty_cache()
-                    preds = model.predict_proba(X_p_conv)[:,1]
+                    preds = model.predict_proba(X_v_conv)[:,1]
 
                 elif name == 'lgb':
-                    model.fit(X_tr, y_tr, eval_set=[(X_e, y_e)], eval_metric='auc')
+                    model.fit(X_t, y_t, eval_set=[(X_e, y_e)], eval_metric='auc')
                     torch.cuda.empty_cache()
-                    preds = model.predict_proba(X_p)[:,1]
+                    preds = model.predict_proba(X_v)[:,1]
 
                 else:
-                    model.fit(X_tr, y_tr, eval_set=[(X_e, y_e)], early_stopping_rounds=10, metric_period=1, verbose=False)
+                    model.fit(X_t, y_t, eval_set=[(X_e, y_e)], early_stopping_rounds=10, metric_period=1, verbose=False)
                     torch.cuda.empty_cache()
-                    preds = model.predict_proba(X_p)[:,1]
+                    preds = model.predict_proba(X_v)[:,1]
             
-                aucs.append(roc_auc_score(y_p, preds))
+                aucs.append(roc_auc_score(y_v, preds))
             
             return float(np.mean(aucs))
         
@@ -131,25 +131,43 @@ def quick_tune_gb(X, y, n_trials=10, csv_path='quick_tuning_trials_info.csv'):
 
     return qt_results
 
-def get_best_gb(embeddings_combined, demographics, labels, method):
+def get_best_gb(embeddings_combined, demographics, labels, embedding_methods):
 
-    qt_skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=98)
-    qt_aucs = defaultdict(list)
+    aggregate = defaultdict(list)
+    for method in embedding_methods:
 
-    for qt_fold, (qt_tv_idx, qt_test_idx) in enumerate(qt_skf.split(embeddings_combined, labels), 1):
+        qt_skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=98)
+        qt_aucs = defaultdict(list)
+
+        for qt_fold, (qt_tv_idx, qt_test_idx) in enumerate(qt_skf.split(embeddings_combined, labels), 1):
+            
+            qt_X_tv, _, qt_y_tv, _ = process_embeddings(
+                embeddings_combined, demographics, labels, qt_tv_idx, qt_test_idx, method
+                )
+            
+            out_path = f"optuna_results/qt_gb/aggregate/{method}_fold{qt_fold}_best_info.csv"
+            qt_results = quick_tune_gb(qt_X_tv, qt_y_tv, n_trials=10, csv_path=out_path)
+
+            for gb_name, qt_info in qt_results.items():
+                qt_aucs[gb_name].append(qt_info['best_score'])
+
+        mean_auc = {m: np.mean(scores) for m, scores in qt_aucs.items()}
+
+        for mod, auc in mean_auc.items():
+            aggregate[mod].append(auc)
         
-        qt_X_tv, _, qt_y_tv, _ = process_embeddings(
-            embeddings_combined, demographics, labels, qt_tv_idx, qt_test_idx, method
-            )
-        
-        out_path = f"/pscratch/sd/h/hazely/NESAP/caduceus/classification/2nd_mdd/py/optuna_results/qt_gb/{method}_fold{qt_fold}_best_info.csv"
-        qt_results = quick_tune_gb(qt_X_tv, qt_y_tv, n_trials=10, csv_path=out_path)
+    overall_mean_auc = {m: np.mean(scores) for m, scores in aggregate.items()}
+    overall_mean_std = {m: np.std(scores) for m, scores in aggregate.items()}
 
-        for gb_name, qt_info in qt_results.items():
-            qt_aucs[gb_name].append(qt_info['best_score'])
+    # Save it to a dataframe
+    overall_auc_df = pd.DataFrame({
+        'model': list(overall_mean_auc.keys()),
+        'mean_auc': list(overall_mean_auc.values()),
+        'std_auc': [overall_mean_std[m] for m in overall_mean_auc.keys()]
+    })
+    overall_auc_df.to_csv('optuna_results/qt_gb/aggregate/overall_aucs.csv')
 
-    mean_auc = {m: np.mean(scores) for m, scores in qt_aucs.items()}
-    best_gb = max(mean_auc, key=mean_auc.get)
+    best_gb = max(overall_mean_auc, key=overall_mean_auc.get)
 
     return best_gb
 
