@@ -17,45 +17,44 @@ model = AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=True)
 model.eval()
 model = model.to(device)
 
-ds_case = datasets.load_from_disk("/pscratch/sd/h/hazely/NESAP/caduceus/dataset/mdd_case_10288_ALLgenes")
-ds_ctrl = datasets.load_from_disk("/pscratch/sd/h/hazely/NESAP/caduceus/dataset/mdd_ctrl_10288_ALLgenes")
+ds_case = datasets.load_from_disk("../../../dataset/mdd_case_10307_ALLgenes")
+ds_ctrl = datasets.load_from_disk("../../../dataset/mdd_ctrl_10307_ALLgenes")
 
 gene_list = ['CRHR1','ESR1','ESR2','PCLO','FHIT','CACNA1C','DRD2','GRM7','EHD3','BICC1','PLOD1','LINC00687','CSMD1','LHPP','APC','ARHGAP8','LOC100996549','CNTNAP2','CRY1','COMT','FKBP5','HTR2A','BDNF','SLC6A4','ACE','SLC6A2','KCNK2','NR3C1','MTHFR','TPH1','TPH2','SOD2','CNR1','TNF','HTR1A','ABCB1','GNB3','GSK3B']
 
 gene_count = len(gene_list)
-sample_size = 10288
+sample_size = 10307
 
-for gene in gene_list:
-    os.mkdir(gene)
+# save gene embeddings (첫 1회에 한해서만)
+# for gene in gene_list:
+#     os.mkdir(gene)
 
 # To keep the shuffling identical across genes
 fixed_generator = torch.Generator()
     
 for n in range(0, gene_count):
 
+    print('Gene: '+gene_list[n]+' - start!')
     list_gene = list(range(n, gene_count*sample_size, gene_count))
 
     sublists = np.array_split(list_gene, 70) # increase this value if facing OOM error
     sublists = [sublist.tolist() for sublist in sublists]
     
     sample_ids_list = []
-    ages_list = []
-    sexes_list = []
-    incomes_list = []
-    ethnicities_list = []
     labels_list = []
     
     sublist_count = 1
     for lst in sublists:
+        print('sublist '+str(sublist_count)+' - start!')
         samples = []
         for i in lst:
-            sq, iid, gene, age, sex, income, ethnicity, label = islice(ds_case[i].values(), 8)
-            samples.append((sq, iid, age, sex, income, ethnicity, label))
+            sq, iid, gene, label = islice(ds_case[i].values(), 4)
+            samples.append((sq, iid, label))
         for i in lst:
-            sq, iid, gene, age, sex, income, ethnicity, label = islice(ds_ctrl[i].values(), 8)
-            samples.append((sq, iid, age, sex, income, ethnicity, label))
+            sq, iid, gene, label = islice(ds_ctrl[i].values(), 4)
+            samples.append((sq, iid, label))
         
-        max_length = max(len(seq) for seq, _, _, _, _, _, _ in samples)
+        max_length = max(len(seq) for seq, _, _ in samples)
 
         # Split the entire sequence into batches to avoid CUDA OOM error
         batch_size = 10  # reduce this value as well if OOM error keeps occurring
@@ -67,7 +66,7 @@ for n in range(0, gene_count):
         batch_count = 1
         with torch.inference_mode():
             for batch in batched_samples:
-                sequences, sample_ids, ages, sexes, incomes, ethnicities, labels = batch
+                sequences, sample_ids, labels = batch
             
                 inputs = tokenizer(list(sequences), padding='max_length', max_length=max_length, truncation=True, return_tensors="pt").to(device)
                 outputs = model(**inputs, output_hidden_states=True)
@@ -90,15 +89,12 @@ for n in range(0, gene_count):
                 
                 # Aggregate metadata
                 sample_ids_list.extend(list(sample_ids))
-                ages_list.extend(list(ages))
-                sexes_list.extend(list(sexes))
-                incomes_list.extend(list(incomes))
-                ethnicities_list.extend(list(ethnicities)
                 labels_list.extend(list(labels))
                 
-                del sequences, sample_ids, ages, sexes, incomes, ethnicities, labels, inputs, outputs, hidden_states, last_hidden_state, forward_hidden, rc_hidden, flipped_rc_hidden, averaged_hidden_state
+                del sequences, sample_ids, labels, inputs, outputs, hidden_states, last_hidden_state, forward_hidden, rc_hidden, flipped_rc_hidden, averaged_hidden_state
                 torch.cuda.empty_cache()
                 
+                print('batch '+str(batch_count)+' - done!')
                 batch_count += 1
         
             last_hidden_states = torch.cat(last_hidden_states, dim=0)
@@ -112,13 +108,13 @@ for n in range(0, gene_count):
         np.save(gene+'/embeddings_'+str(sublist_count)+'.npy', embeddings)
         
         del last_hidden_states, last_hidden_state_cpu, embeddings
+        print('sublist '+str(sublist_count)+' - done!')
         sublist_count += 1
     
     # Save metadata (only for the first processed gene - same for others)    
     if n == 0:
         np.save('iids.npy', sample_ids_list)
-        np.save('age.npy', ages_list)
-        np.save('sex.npy', sexes_list)
-        np.save('income.npy', incomes_list)
-        np.save('ethnicity.npy', ethnicities_list)
         np.save('labels.npy', labels_list)
+        
+    print('Gene: '+gene+' - done!!')
+    print()
